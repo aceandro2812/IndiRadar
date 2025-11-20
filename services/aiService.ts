@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { AIReport, Category, ChartDataPoint, KeyStat } from "../types";
+import { rateLimitService } from "./rateLimitService";
 
 // Prefer common env var names; fall back gracefully.
 const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY;
@@ -15,6 +16,17 @@ const PROMPTS: Record<Category, string> = {
 
 export const fetchIndiaAINews = async (category: Category): Promise<AIReport> => {
   try {
+    // Check rate limit before making API call
+    const rateLimitStatus = rateLimitService.checkRateLimit();
+
+    if (!rateLimitStatus.canMakeRequest) {
+      const reason = rateLimitStatus.remainingCalls === 0
+        ? `Daily API limit reached (${rateLimitStatus.dailyLimit} calls). Resets at midnight.`
+        : `Per-minute rate limit exceeded. Please wait a moment before trying again.`;
+
+      throw new Error(`RATE_LIMIT_EXCEEDED: ${reason}`);
+    }
+
     const basePrompt = PROMPTS[category];
 
     const prompt = `${basePrompt} 
@@ -51,6 +63,9 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
         tools: [{ googleSearch: {} }],
       },
     });
+
+    // Record successful API call for rate limiting
+    rateLimitService.recordApiCall();
 
     let text = response.text || "No information available at the moment.";
 

@@ -5,25 +5,38 @@ import { BriefingView } from './components/BriefingView';
 import { SourcesList } from './components/SourcesList';
 import { TrendChart } from './components/TrendChart';
 import { StatsGrid } from './components/StatsGrid';
+import { RateLimitIndicator } from './components/RateLimitIndicator';
 import { fetchIndiaAINews } from './services/aiService';
 import { Category, AIReport } from './types';
-import { Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Loader2, RefreshCw, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { rateLimitService } from './services/rateLimitService';
 
 const App: React.FC = () => {
   const [category, setCategory] = useState<Category>('latest');
   const [report, setReport] = useState<AIReport | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRateLimitError, setIsRateLimitError] = useState<boolean>(false);
 
   const loadData = async (cat: Category) => {
     setIsLoading(true);
     setError(null);
+    setIsRateLimitError(false);
+
     try {
       const data = await fetchIndiaAINews(cat);
       setReport(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Failed to gather intelligence. Connection to neural grid unstable.");
+
+      // Check if it's a rate limit error
+      if (err.message && err.message.includes('RATE_LIMIT_EXCEEDED')) {
+        setIsRateLimitError(true);
+        const cleanMessage = err.message.replace('RATE_LIMIT_EXCEEDED: ', '');
+        setError(cleanMessage);
+      } else {
+        setError("Failed to gather intelligence. Connection to neural grid unstable.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -35,6 +48,15 @@ const App: React.FC = () => {
   }, [category]);
 
   const handleRefresh = () => {
+    const rateLimitStatus = rateLimitService.checkRateLimit();
+    if (!rateLimitStatus.canMakeRequest) {
+      setIsRateLimitError(true);
+      const reason = rateLimitStatus.remainingCalls === 0
+        ? `Daily API limit reached (${rateLimitStatus.dailyLimit} calls). Resets at midnight.`
+        : `Per-minute rate limit exceeded. Please wait a moment before trying again.`;
+      setError(reason);
+      return;
+    }
     loadData(category);
   };
 
@@ -70,15 +92,26 @@ const App: React.FC = () => {
         </div>
 
         {error ? (
-          <div className="p-8 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex flex-col items-center justify-center text-center">
-            <AlertTriangle className="w-8 h-8 mb-2 opacity-80" />
+          <div className={`p-8 rounded-2xl ${isRateLimitError ? 'bg-india-saffron/10 border-india-saffron/20 text-india-saffron' : 'bg-red-500/10 border-red-500/20 text-red-400'} border flex flex-col items-center justify-center text-center`}>
+            {isRateLimitError ? (
+              <ShieldAlert className="w-8 h-8 mb-2 opacity-80" />
+            ) : (
+              <AlertTriangle className="w-8 h-8 mb-2 opacity-80" />
+            )}
             <p className="font-medium">{error}</p>
-            <button 
-              onClick={handleRefresh}
-              className="mt-4 px-6 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-sm font-medium transition-colors text-white"
-            >
-              Retry Connection
-            </button>
+            {!isRateLimitError && (
+              <button
+                onClick={handleRefresh}
+                className="mt-4 px-6 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-sm font-medium transition-colors text-white"
+              >
+                Retry Connection
+              </button>
+            )}
+            {isRateLimitError && (
+              <p className="mt-3 text-sm opacity-80">
+                Please wait until the reset time or adjust your daily limit in the configuration.
+              </p>
+            )}
           </div>
         ) : isLoading ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh]">
@@ -102,6 +135,9 @@ const App: React.FC = () => {
 
               {/* Right Sidebar */}
               <div className="lg:col-span-4 space-y-6">
+                {/* Rate Limit Indicator */}
+                <RateLimitIndicator />
+
                 {/* Chart Component */}
                 <div className="h-[300px]">
                   <TrendChart data={report.chartData} category={category} />
