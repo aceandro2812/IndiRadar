@@ -1,8 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { AIReport, Category, ChartDataPoint, KeyStat } from "../types";
 
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Prefer common env var names; fall back gracefully.
+const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY;
+// Initialize Gemini. If no API key present, we still construct the client; calls will fail and be caught.
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : new GoogleGenAI();
 
 const PROMPTS: Record<Category, string> = {
   latest: "Focus on the absolute latest AI product launches, major updates, and breaking news in India from the last 30 days. Highlight government initiatives (IndiaAI) and corporate moves.",
@@ -14,7 +16,7 @@ const PROMPTS: Record<Category, string> = {
 export const fetchIndiaAINews = async (category: Category): Promise<AIReport> => {
   try {
     const basePrompt = PROMPTS[category];
-    
+
     const prompt = `${basePrompt} 
     
     Format the main response in clean Markdown. Use '##' for main section headers. Use bullet points. Bold specific company/product names. Focus strictly on India.
@@ -38,6 +40,10 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
     \`\`\`
     `;
 
+    if (!apiKey) {
+      throw new Error("Missing Gemini API key. Set GEMINI_API_KEY or GOOGLE_API_KEY or API_KEY.");
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
@@ -47,7 +53,7 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
     });
 
     let text = response.text || "No information available at the moment.";
-    
+
     const rawChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     const chunks = rawChunks
       .map((chunk: any) => ({
@@ -66,23 +72,23 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
     // Matches ```csv [whitespace/newlines] content ```
     const csvRegex = /```\s*csv\s*([\s\S]*?)```/i;
     const csvMatch = text.match(csvRegex);
-    
+
     if (csvMatch && csvMatch[1]) {
       const rows = csvMatch[1].trim().split('\n');
       // Skip header row if present
       const dataRows = rows.length > 0 && rows[0].toLowerCase().includes('label') ? rows.slice(1) : rows;
-      
+
       dataRows.forEach(row => {
         // Safe split handling potentially quoted values or simple comma separation
         const firstComma = row.indexOf(',');
         if (firstComma > 0) {
-            const label = row.substring(0, firstComma).trim();
-            const valueRaw = row.substring(firstComma + 1).trim();
-            // Extract numeric part for chart
-            const value = parseFloat(valueRaw.replace(/[^0-9.]/g, '')) || 0;
-            if (label) {
-                chartData.push({ label, value });
-            }
+          const label = row.substring(0, firstComma).trim();
+          const valueRaw = row.substring(firstComma + 1).trim();
+          // Extract numeric part for chart
+          const value = parseFloat(valueRaw.replace(/[^0-9.]/g, '')) || 0;
+          if (label) {
+            chartData.push({ label, value });
+          }
         }
       });
       // Remove the block from display text using exact match
@@ -92,7 +98,7 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
     // Extract Stats CSV
     const statsRegex = /```\s*stats\s*([\s\S]*?)```/i;
     const statsMatch = text.match(statsRegex);
-    
+
     if (statsMatch && statsMatch[1]) {
       const rows = statsMatch[1].trim().split('\n');
       const dataRows = rows.length > 0 && rows[0].toLowerCase().includes('label') ? rows.slice(1) : rows;
@@ -100,15 +106,15 @@ export const fetchIndiaAINews = async (category: Category): Promise<AIReport> =>
       dataRows.forEach(row => {
         const firstComma = row.indexOf(',');
         if (firstComma > 0) {
-            const label = row.substring(0, firstComma).trim();
-            const value = row.substring(firstComma + 1).trim();
-            if (label && value) {
-                stats.push({ label, value, trend: 'up' });
-            }
+          const label = row.substring(0, firstComma).trim();
+          const value = row.substring(firstComma + 1).trim();
+          if (label && value) {
+            stats.push({ label, value, trend: 'up' });
+          }
         }
       });
-       // Remove the block from display text using exact match
-       text = text.replace(statsMatch[0], '');
+      // Remove the block from display text using exact match
+      text = text.replace(statsMatch[0], '');
     }
 
     // Fallback data if parsing fails (prevents UI breakage)
